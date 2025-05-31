@@ -1,12 +1,7 @@
-import RPi.GPIO as GPIO
 import time
-from gpiozero import OutputDevice
+from gpiozero import OutputDevice, InputDevice
 from time import sleep
 import requests
-
-# GPIO setup for keypad
-GPIO.setmode(GPIO.BCM)
-GPIO.setwarnings(False)
 
 # Define the GPIO pins for keypad rows and columns
 ROWS = [18, 23, 24, 25]  # GPIO pins for rows
@@ -20,13 +15,13 @@ KEYPAD = [
     ['*', '0', '#', 'D']
 ]
 
-# LCD setup using gpiozero
-LCD_RS = OutputDevice(25)
-LCD_E = OutputDevice(24)
-LCD_D4 = OutputDevice(23)
-LCD_D5 = OutputDevice(18)
-LCD_D6 = OutputDevice(15)
-LCD_D7 = OutputDevice(14)
+# LCD pins
+LCD_RS_PIN = 25
+LCD_E_PIN = 24
+LCD_D4_PIN = 23
+LCD_D5_PIN = 18
+LCD_D6_PIN = 15
+LCD_D7_PIN = 14
 
 LCD_WIDTH = 16
 LCD_CHR = True
@@ -52,36 +47,64 @@ class KeypadLCDSystem:
         self.last_name_display_time = 0
         self.name_display_interval = 3  # seconds
         
+        # Initialize GPIO devices
+        self.row_pins = []
+        self.col_pins = []
+        self.lcd_rs = None
+        self.lcd_e = None
+        self.lcd_d4 = None
+        self.lcd_d5 = None
+        self.lcd_d6 = None
+        self.lcd_d7 = None
+        
     def setup_keypad(self):
         """Initialize the GPIO pins for the keypad"""
-        # Set up row pins as outputs
-        for row_pin in ROWS:
-            GPIO.setup(row_pin, GPIO.OUT)
-            GPIO.output(row_pin, GPIO.LOW)
+        # Set up row pins as outputs (initially low)
+        for pin in ROWS:
+            row_device = OutputDevice(pin, initial_value=False)
+            self.row_pins.append(row_device)
         
-        # Set up column pins as inputs with pull-down resistors
-        for col_pin in COLS:
-            GPIO.setup(col_pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+        # Set up column pins as inputs with pull-down
+        for pin in COLS:
+            col_device = InputDevice(pin, pull_up=False)
+            self.col_pins.append(col_device)
 
     def scan_keypad(self):
         """Scan the keypad and return the pressed key, or None if no key is pressed"""
-        for row_index, row_pin in enumerate(ROWS):
-            GPIO.output(row_pin, GPIO.HIGH)
+        for row_index, row_pin in enumerate(self.row_pins):
+            # Set current row to HIGH
+            row_pin.on()
             
-            for col_index, col_pin in enumerate(COLS):
-                if GPIO.input(col_pin) == GPIO.HIGH:
+            # Small delay to allow signal to stabilize
+            time.sleep(0.001)
+            
+            # Check each column
+            for col_index, col_pin in enumerate(self.col_pins):
+                if col_pin.is_active:
+                    # Key is pressed - get the corresponding character
                     key = KEYPAD[row_index][col_index]
                     
-                    # Wait for key release
-                    while GPIO.input(col_pin) == GPIO.HIGH:
+                    # Wait for key release to avoid multiple readings
+                    while col_pin.is_active:
                         time.sleep(0.01)
                     
-                    GPIO.output(row_pin, GPIO.LOW)
+                    # Set row back to LOW before returning
+                    row_pin.off()
                     return key
             
-            GPIO.output(row_pin, GPIO.LOW)
+            # Set current row back to LOW
+            row_pin.off()
         
-        return None
+        return None  # No key pressed
+
+    def setup_lcd(self):
+        """Initialize LCD GPIO pins"""
+        self.lcd_rs = OutputDevice(LCD_RS_PIN)
+        self.lcd_e = OutputDevice(LCD_E_PIN)
+        self.lcd_d4 = OutputDevice(LCD_D4_PIN)
+        self.lcd_d5 = OutputDevice(LCD_D5_PIN)
+        self.lcd_d6 = OutputDevice(LCD_D6_PIN)
+        self.lcd_d7 = OutputDevice(LCD_D7_PIN)
 
     def lcd_init(self):
         """Initialize the LCD"""
@@ -95,50 +118,50 @@ class KeypadLCDSystem:
         
     def lcd_byte(self, bits, mode):
         """Send byte to LCD"""
-        LCD_RS.value = mode
+        self.lcd_rs.value = mode
         
         # Clear all data pins
-        LCD_D4.off()
-        LCD_D5.off()
-        LCD_D6.off()
-        LCD_D7.off()
+        self.lcd_d4.off()
+        self.lcd_d5.off()
+        self.lcd_d6.off()
+        self.lcd_d7.off()
         
         # Set high nibble
         if bits & 0x10:
-            LCD_D4.on()
+            self.lcd_d4.on()
         if bits & 0x20:
-            LCD_D5.on()
+            self.lcd_d5.on()
         if bits & 0x40:
-            LCD_D6.on()
+            self.lcd_d6.on()
         if bits & 0x80:
-            LCD_D7.on()
+            self.lcd_d7.on()
             
         self.lcd_toggle_enable()
         
         # Clear all data pins
-        LCD_D4.off()
-        LCD_D5.off()
-        LCD_D6.off()
-        LCD_D7.off()
+        self.lcd_d4.off()
+        self.lcd_d5.off()
+        self.lcd_d6.off()
+        self.lcd_d7.off()
         
         # Set low nibble
         if bits & 0x01:
-            LCD_D4.on()
+            self.lcd_d4.on()
         if bits & 0x02:
-            LCD_D5.on()
+            self.lcd_d5.on()
         if bits & 0x04:
-            LCD_D6.on()
+            self.lcd_d6.on()
         if bits & 0x08:
-            LCD_D7.on()
+            self.lcd_d7.on()
         
         self.lcd_toggle_enable()
         
     def lcd_toggle_enable(self):
         """Toggle enable pin"""
         sleep(E_DELAY)
-        LCD_E.on()
+        self.lcd_e.on()
         sleep(E_PULSE)
-        LCD_E.off()
+        self.lcd_e.off()
         sleep(E_DELAY)
         
     def lcd_string(self, message, line):
@@ -217,20 +240,48 @@ class KeypadLCDSystem:
         sleep(2)
         # Add your keys logic here
 
+    def cleanup(self):
+        """Clean up GPIO resources"""
+        try:
+            # Close all row pins
+            for pin in self.row_pins:
+                pin.close()
+            
+            # Close all column pins
+            for pin in self.col_pins:
+                pin.close()
+            
+            # Close LCD pins
+            if self.lcd_rs:
+                self.lcd_rs.close()
+            if self.lcd_e:
+                self.lcd_e.close()
+            if self.lcd_d4:
+                self.lcd_d4.close()
+            if self.lcd_d5:
+                self.lcd_d5.close()
+            if self.lcd_d6:
+                self.lcd_d6.close()
+            if self.lcd_d7:
+                self.lcd_d7.close()
+        except Exception as e:
+            print(f"Cleanup error: {e}")
+
     def run(self):
         """Main program loop"""
         print("Keypad LCD System Starting...")
         print("Press Ctrl+C to exit.")
         
-        # Initialize hardware
-        self.setup_keypad()
-        self.lcd_init()
-        
-        # Load names from API
-        self.names = self.fetch_names()
-        self.last_name_display_time = time.time()
-        
         try:
+            # Initialize hardware
+            self.setup_keypad()
+            self.setup_lcd()
+            self.lcd_init()
+            
+            # Load names from API
+            self.names = self.fetch_names()
+            self.last_name_display_time = 0
+            
             while True:
                 current_time = time.time()
                 key = self.scan_keypad()
@@ -306,9 +357,11 @@ class KeypadLCDSystem:
                 
         except KeyboardInterrupt:
             print("\nExiting...")
+        except Exception as e:
+            print(f"Error: {e}")
         finally:
             self.lcd_clear()
-            GPIO.cleanup()
+            self.cleanup()
 
 if __name__ == '__main__':
     system = KeypadLCDSystem()
