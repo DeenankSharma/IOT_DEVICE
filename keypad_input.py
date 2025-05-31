@@ -6,8 +6,8 @@ GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
 
 # Define the GPIO pins for rows and columns
-ROWS = [18, 23, 24, 25]  # GPIO pins for rows
-COLS = [4, 17, 27, 22]   # GPIO pins for columns
+ROWS = [3,5,6,13]  # GPIO pins for rows
+COLS = [19,26,21,20]   # GPIO pins for columns
 
 # Define the keypad layout (what each button represents)
 KEYPAD = [
@@ -86,3 +86,4 @@ def take_input():
     finally:
         # Clean up GPIO pins
         GPIO.cleanup()
+take_input()

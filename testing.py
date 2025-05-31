@@ -2,12 +2,18 @@ import time
 from gpiozero import OutputDevice, InputDevice
 from time import sleep
 import requests
+from dotenv import load_dotenv 
+import os
 
-# Define the GPIO pins for keypad rows and columns
-ROWS = [18, 23, 24, 25]  # GPIO pins for rows
-COLS = [4, 17, 27, 22]   # GPIO pins for columns
+load_dotenv()
 
-# Define the keypad layout
+fu_url = os.getenv("FU_URL")
+at_url = os.getenv("AT_URL")
+key_url = os.getenv("KEY_URL")
+
+
+ROWS = [3,5,6,13]  # rows ki GPIO pins
+COLS = [19,26,21,20]   # cols ki GPIO pins
 KEYPAD = [
     ['1', '2', '3', 'A'],
     ['4', '5', '6', 'B'], 
@@ -15,7 +21,6 @@ KEYPAD = [
     ['*', '0', '#', 'D']
 ]
 
-# LCD pins
 LCD_RS_PIN = 25
 LCD_E_PIN = 24
 LCD_D4_PIN = 23
@@ -31,11 +36,20 @@ LCD_LINE_2 = 0xC0
 E_PULSE = 0.0005
 E_DELAY = 0.0005
 
-# System states
 STATE_DISPLAY_NAMES = 0
 STATE_MENU = 1
 STATE_ENTER_ENR = 2
 STATE_PROCESSING = 3
+
+def update_attendance(enrollment_num):
+    print(str(enrollment_num))
+    response = requests.post(str(at_url),data={"rollno":str(enrollment_num)})
+    sleep(5)
+    
+def update_key_holder(enrollment_num):
+    print(str(enrollment_num))
+    response = requests.post(str(key_url),data={"rollno":str(enrollment_num)})
+    sleep(5)
 
 class KeypadLCDSystem:
     def __init__(self):
@@ -45,9 +59,8 @@ class KeypadLCDSystem:
         self.names = []
         self.current_name_index = 0
         self.last_name_display_time = 0
-        self.name_display_interval = 3  # seconds
+        self.name_display_interval = 6  # seconds
         
-        # Initialize GPIO devices
         self.row_pins = []
         self.col_pins = []
         self.lcd_rs = None
@@ -59,12 +72,10 @@ class KeypadLCDSystem:
         
     def setup_keypad(self):
         """Initialize the GPIO pins for the keypad"""
-        # Set up row pins as outputs (initially low)
+
         for pin in ROWS:
             row_device = OutputDevice(pin, initial_value=False)
             self.row_pins.append(row_device)
-        
-        # Set up column pins as inputs with pull-down
         for pin in COLS:
             col_device = InputDevice(pin, pull_up=False)
             self.col_pins.append(col_device)
@@ -72,30 +83,23 @@ class KeypadLCDSystem:
     def scan_keypad(self):
         """Scan the keypad and return the pressed key, or None if no key is pressed"""
         for row_index, row_pin in enumerate(self.row_pins):
-            # Set current row to HIGH
             row_pin.on()
-            
-            # Small delay to allow signal to stabilize
             time.sleep(0.001)
-            
-            # Check each column
             for col_index, col_pin in enumerate(self.col_pins):
                 if col_pin.is_active:
-                    # Key is pressed - get the corresponding character
+                    
                     key = KEYPAD[row_index][col_index]
                     
-                    # Wait for key release to avoid multiple readings
+           
                     while col_pin.is_active:
                         time.sleep(0.01)
-                    
-                    # Set row back to LOW before returning
                     row_pin.off()
                     return key
             
-            # Set current row back to LOW
+           
             row_pin.off()
         
-        return None  # No key pressed
+        return None 
 
     def setup_lcd(self):
         """Initialize LCD GPIO pins"""
@@ -120,13 +124,12 @@ class KeypadLCDSystem:
         """Send byte to LCD"""
         self.lcd_rs.value = mode
         
-        # Clear all data pins
+        
         self.lcd_d4.off()
         self.lcd_d5.off()
         self.lcd_d6.off()
         self.lcd_d7.off()
         
-        # Set high nibble
         if bits & 0x10:
             self.lcd_d4.on()
         if bits & 0x20:
@@ -138,13 +141,12 @@ class KeypadLCDSystem:
             
         self.lcd_toggle_enable()
         
-        # Clear all data pins
+        
         self.lcd_d4.off()
         self.lcd_d5.off()
         self.lcd_d6.off()
         self.lcd_d7.off()
         
-        # Set low nibble
         if bits & 0x01:
             self.lcd_d4.on()
         if bits & 0x02:
@@ -180,17 +182,18 @@ class KeypadLCDSystem:
     def fetch_names(self):
         """Fetch names from API"""
         try:
-            url = ""  # Add your URL here
+            url = str(fu_url)  # Add your URL here
             response = requests.get(url=url)
+            sleep(3)
             data = response.json()
             return data["rows"]
         except Exception as e:
             print(f"Warning: Failed to fetch data from API. Error: {e}")
             print("Using sample data.")
             return [
-                {"enrollment_num": "22115022", "slack_name": "nano", "bhawan": "GB"},
-                {"enrollment_num": "23116101", "slack_name": "rhapsody", "bhawan": "KB"},
-                {"enrollment_num": "24112044", "slack_name": "smurf", "bhawan": "SB"}
+                {"enrollment_num": "23115042", "slack_name": "satoshi", "bhawan": "JB"},
+                #{"enrollment_num": "23116101", "slack_name": "rhapsody", "bhawan": "KB"},
+                #{"enrollment_num": "24112044", "slack_name": "smurf", "bhawan": "SB"}
             ]
 
     def display_current_name(self):
@@ -198,11 +201,11 @@ class KeypadLCDSystem:
         if self.names:
             current_person = self.names[self.current_name_index]
             
-            # First line: slack_name
+            # slack name ki display line
             name = current_person.get("slack_name", "Unknown")
             self.lcd_string(name, LCD_LINE_1)
             
-            # Second line: bhawan + enrollment_num
+            # bhawan + enrollment_num
             bhawan = current_person.get("bhawan", "")
             enrollment = current_person.get("enrollment_num", "")
             second_line = f"{bhawan} {enrollment}"
@@ -220,7 +223,6 @@ class KeypadLCDSystem:
         elif self.selected_option == 'C':
             self.lcd_string("Who has keys?", LCD_LINE_1)
         
-        # Display current enrollment number being entered
         display_enr = self.enrollment_number[-16:] if len(self.enrollment_number) > 16 else self.enrollment_number
         self.lcd_string(display_enr, LCD_LINE_2)
 
@@ -229,29 +231,30 @@ class KeypadLCDSystem:
         print(f"Processing in/out for enrollment: {enrollment_number}")
         self.lcd_string("Processing...", LCD_LINE_1)
         self.lcd_string("In/Out logged", LCD_LINE_2)
-        sleep(2)
-        # Add your in/out logic here
+        update__attendance(enrollment_number)
+        sleep(4)
+        
         
     def handle_keys_function(self, enrollment_number):
         """Handle the keys functionality"""
         print(f"Processing keys for enrollment: {enrollment_number}")
         self.lcd_string("Processing...", LCD_LINE_1)
         self.lcd_string("Keys logged", LCD_LINE_2)
+        update_key_holder(enrollment_number)
+        sleep(4)
+        self.names = self.fetch_names()
         sleep(2)
-        # Add your keys logic here
-
+        
     def cleanup(self):
         """Clean up GPIO resources"""
         try:
-            # Close all row pins
             for pin in self.row_pins:
                 pin.close()
             
-            # Close all column pins
             for pin in self.col_pins:
                 pin.close()
             
-            # Close LCD pins
+            
             if self.lcd_rs:
                 self.lcd_rs.close()
             if self.lcd_e:
@@ -273,12 +276,10 @@ class KeypadLCDSystem:
         print("Press Ctrl+C to exit.")
         
         try:
-            # Initialize hardware
             self.setup_keypad()
             self.setup_lcd()
             self.lcd_init()
             
-            # Load names from API
             self.names = self.fetch_names()
             self.last_name_display_time = 0
             
@@ -287,16 +288,15 @@ class KeypadLCDSystem:
                 key = self.scan_keypad()
                 
                 if self.current_state == STATE_DISPLAY_NAMES:
-                    # Display names cycling every 3 seconds
+            
                     if current_time - self.last_name_display_time >= self.name_display_interval:
                         self.current_name_index = (self.current_name_index + 1) % len(self.names)
                         self.display_current_name()
                         self.last_name_display_time = current_time
-                    elif self.last_name_display_time == 0:  # First display
+                    elif self.last_name_display_time == 0:
                         self.display_current_name()
                         self.last_name_display_time = current_time
                     
-                    # Check for keypad interrupt
                     if key == 'A':
                         self.current_state = STATE_MENU
                         self.display_menu()
@@ -321,7 +321,7 @@ class KeypadLCDSystem:
                         self.enrollment_number += key
                         self.display_enrollment_input()
                         print(f"Enrollment number: {self.enrollment_number}")
-                    elif key == '#':  # Enter key
+                    elif key == '#':  
                         if self.enrollment_number:
                             print(f"Processing enrollment: {self.enrollment_number}")
                             if self.selected_option == 'B':
@@ -329,22 +329,20 @@ class KeypadLCDSystem:
                             elif self.selected_option == 'C':
                                 self.handle_keys_function(self.enrollment_number)
                             
-                            # Return to name display
                             self.current_state = STATE_DISPLAY_NAMES
                             self.current_name_index = 0
                             self.last_name_display_time = time.time()
                             self.display_current_name()
                             self.enrollment_number = ""
                             self.selected_option = None
-                    elif key == '*':  # Clear/Back
+                    elif key == '*': 
                         if self.enrollment_number:
                             self.enrollment_number = self.enrollment_number[:-1]
                             self.display_enrollment_input()
                         else:
-                            # Go back to menu
                             self.current_state = STATE_MENU
                             self.display_menu()
-                    elif key == 'D':  # Cancel and go back to names
+                    elif key == 'D': 
                         self.current_state = STATE_DISPLAY_NAMES
                         self.current_name_index = 0
                         self.last_name_display_time = time.time()
@@ -353,7 +351,7 @@ class KeypadLCDSystem:
                         self.selected_option = None
                         print("Cancelled, returning to name display")
                 
-                time.sleep(0.05)  # Small delay to prevent excessive CPU usage
+                time.sleep(0.05) 
                 
         except KeyboardInterrupt:
             print("\nExiting...")
